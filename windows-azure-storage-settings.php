@@ -156,6 +156,16 @@ function windows_azure_storage_plugin_register_settings() {
 		'windows-azure-storage-settings'
 	);
 	/**
+	 * @since 4.6.0
+	 */
+	add_settings_field(
+		'azure_storage_test_connection',
+		__( 'Test Connection', 'windows-azure-storage' ),
+		'windows_azure_storage_setting_test_connection',
+		'windows-azure-storage-plugin-options',
+		'windows-azure-storage-settings'
+	);
+	/**
 	 * @since 4.0.0
 	 */
 	add_settings_field(
@@ -252,9 +262,9 @@ function windows_azure_storage_setting_account_name() {
 	$storage_account_name = Windows_Azure_Helper::get_account_name();
 
 	if ( defined( 'MICROSOFT_AZURE_ACCOUNT_NAME' ) ) {
-		echo '<input type="text" class="regular-text" value="', esc_attr( $storage_account_name ), '" readonly disabled>';
+		echo '<input type="text" id="azure_storage_account_name" class="regular-text" value="', esc_attr( $storage_account_name ), '" readonly disabled>';
 	} else {
-		echo '<input type="text" name="azure_storage_account_name" class="regular-text" value="', esc_attr( $storage_account_name ), '">';
+		echo '<input type="text" name="azure_storage_account_name" id="azure_storage_account_name" class="regular-text" value="', esc_attr( $storage_account_name ), '">';
 	}
 
 	echo '<p>';
@@ -273,14 +283,110 @@ function windows_azure_storage_setting_account_key() {
 	$storage_account_key = Windows_Azure_Helper::get_account_key();
 
 	if ( defined( 'MICROSOFT_AZURE_ACCOUNT_KEY' ) ) {
-		echo '<input type="text" class="large-text" value="', esc_attr( $storage_account_key ), '" readonly disabled>';
+		echo '<input type="text" id="azure_storage_account_primary_access_key" class="large-text" value="', esc_attr( $storage_account_key ), '" readonly disabled>';
 	} else {
-		echo '<input type="text" name="azure_storage_account_primary_access_key" class="large-text" value="', esc_attr( $storage_account_key ), '">';
+		echo '<input type="text" name="azure_storage_account_primary_access_key" id="azure_storage_account_primary_access_key" class="large-text" value="', esc_attr( $storage_account_key ), '">';
 	}
 
 	echo '<p>';
 	echo wp_kses_post( __( 'Microsoft Azure Storage Account Primary Access Key. You can define <code>MICROSOFT_AZURE_ACCOUNT_KEY</code> constant to override it.', 'windows-azure-storage' ) );
 	echo '</p>';
+}
+
+/**
+ * Test connection setting callback function.
+ *
+ * Renders a button which, via AJAX, attempts to connect to Microsoft Azure
+ * Storage using whatever Account Name and Primary Access Key currently sit
+ * in the fields above -- even if those values have not been saved yet.
+ *
+ * @since 4.6.0
+ *
+ * @return void
+ */
+function windows_azure_storage_setting_test_connection() {
+	wp_nonce_field( 'windows_azure_storage_test_connection', 'windows_azure_storage_test_connection_nonce', false );
+	?>
+	<button type="button" class="button" id="azure-test-connection-button">
+		<?php esc_html_e( 'Test Connection', 'windows-azure-storage' ); ?>
+	</button>
+	<span class="spinner" id="azure-test-connection-spinner" style="float: none; vertical-align: middle;"></span>
+	<span id="azure-test-connection-result" role="status" aria-live="polite" style="margin-left: 8px; vertical-align: middle;"></span>
+	<p>
+		<?php esc_html_e( 'Checks that WordPress can connect to Microsoft Azure Storage with the Account Name and Primary Access Key above. This does not save your settings.', 'windows-azure-storage' ); ?>
+	</p>
+	<?php
+}
+
+/**
+ * AJAX handler which tests a Microsoft Azure Storage connection.
+ *
+ * Accepts an account name and key posted from the settings screen (which
+ * may not yet be saved) and attempts to list containers for that account.
+ * Responds with wp_send_json_success() on success or wp_send_json_error()
+ * with a human readable message otherwise.
+ *
+ * @since 4.6.0
+ *
+ * @return void
+ */
+function windows_azure_storage_test_connection_ajax_handler() {
+	check_ajax_referer( 'windows_azure_storage_test_connection', 'nonce' );
+
+	if ( ! current_user_can( 'manage_options' ) ) {
+		wp_send_json_error(
+			array( 'message' => __( 'You do not have permission to do this.', 'windows-azure-storage' ) ),
+			403
+		);
+	}
+
+	// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- credentials are to be used as passed to ensure they are valid.
+	$account_name = isset( $_POST['account_name'] ) ? trim( wp_unslash( $_POST['account_name'] ) ) : '';
+	// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- credentials are to be used as passed to ensure they are valid.
+	$account_key = isset( $_POST['account_key'] ) ? trim( wp_unslash( $_POST['account_key'] ) ) : '';
+
+	if ( '' === $account_name || '' === $account_key ) {
+		wp_send_json_error(
+			array( 'message' => __( 'Please enter both a Storage Account Name and Primary Access Key before testing the connection.', 'windows-azure-storage' ) )
+		);
+	}
+
+	try {
+		$result = Windows_Azure_Helper::list_containers( $account_name, $account_key, true );
+	} catch ( Exception $e ) {
+		wp_send_json_error(
+			array(
+				/* translators: %s: error message returned by the Azure Storage SDK. */
+				'message' => sprintf( __( 'Connection failed: %s', 'windows-azure-storage' ), $e->getMessage() ),
+			)
+		);
+	}
+
+	if ( is_wp_error( $result ) ) {
+		wp_send_json_error(
+			array(
+				/* translators: %s: error message returned by the Azure Storage SDK. */
+				'message' => sprintf( __( 'Connection failed: %s', 'windows-azure-storage' ), $result->get_error_message() ),
+			)
+		);
+	}
+
+	$container_count = count( $result->get_all() );
+
+	wp_send_json_success(
+		array(
+			'message' => sprintf(
+				/* translators: %d: number of containers found. */
+				_n(
+					'Connection successful. Found %d container.',
+					'Connection successful. Found %d containers.',
+					$container_count,
+					'windows-azure-storage'
+				),
+				$container_count
+			),
+		)
+	);
 }
 
 /**

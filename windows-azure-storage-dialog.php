@@ -55,11 +55,89 @@ function windows_azure_storage_dialog_scripts( $hook_suffix ) {
 		'azureStorageConfig',
 		array(
 			'l10n' => array(
-				'uploadingToAzure' => __( 'Uploading to Azure', 'windows-azure-storage' ),
-				'uploadReady'      => __( 'Attachment details', 'windows-azure-storage' ),
+				'uploadingToAzure'            => __( 'Uploading to Azure', 'windows-azure-storage' ),
+				'uploadReady'                 => __( 'Attachment details', 'windows-azure-storage' ),
+				'testConnectionTesting'       => __( 'Testing connection...', 'windows-azure-storage' ),
+				'testConnectionMissingFields' => __( 'Please enter both a Storage Account Name and Primary Access Key before testing the connection.', 'windows-azure-storage' ),
+				'testConnectionRequestFailed' => __( 'Could not reach the server to test the connection. Please try again.', 'windows-azure-storage' ),
 			),
 		)
 	);
+
+	/*
+	 * Handles the "Test Connection" button on the plugin settings page.
+	 * Added as an inline script (rather than bundled) so it works
+	 * regardless of whether SCRIPT_DEBUG is loading the minified or
+	 * unminified build of windows-azure-storage-admin.js.
+	 *
+	 * @since 4.6.0
+	 */
+	$test_connection_js = <<<'JS'
+( function ( $ ) {
+	'use strict';
+	$( document ).ready( function () {
+		$( '#azure-test-connection-button' ).on( 'click', function ( event ) {
+			event.preventDefault();
+
+			var $button   = $( this ),
+				$spinner  = $( '#azure-test-connection-spinner' ),
+				$result   = $( '#azure-test-connection-result' ),
+				accountName = $.trim( $( '#azure_storage_account_name' ).val() || '' ),
+				accountKey  = $.trim( $( '#azure_storage_account_primary_access_key' ).val() || '' ),
+				nonce       = $( '#windows_azure_storage_test_connection_nonce' ).val();
+
+			$result
+				.removeClass( 'azure-test-connection-success azure-test-connection-error' )
+				.text( '' );
+
+			if ( ! accountName || ! accountKey ) {
+				$result
+					.addClass( 'azure-test-connection-error' )
+					.text( azureStorageConfig.l10n.testConnectionMissingFields );
+				return;
+			}
+
+			$button.prop( 'disabled', true );
+			$spinner.addClass( 'is-active' );
+			$result.text( azureStorageConfig.l10n.testConnectionTesting );
+
+			$.post( window.ajaxurl, {
+				action: 'windows_azure_storage_test_connection',
+				nonce: nonce,
+				account_name: accountName,
+				account_key: accountKey
+			} ).done( function ( response ) {
+				if ( response && response.success ) {
+					$result
+						.removeClass( 'azure-test-connection-error' )
+						.addClass( 'azure-test-connection-success' )
+						.text( response.data.message );
+				} else {
+					$result
+						.removeClass( 'azure-test-connection-success' )
+						.addClass( 'azure-test-connection-error' )
+						.text( ( response && response.data && response.data.message ) || azureStorageConfig.l10n.testConnectionRequestFailed );
+				}
+			} ).fail( function () {
+				$result
+					.removeClass( 'azure-test-connection-success' )
+					.addClass( 'azure-test-connection-error' )
+					.text( azureStorageConfig.l10n.testConnectionRequestFailed );
+			} ).always( function () {
+				$button.prop( 'disabled', false );
+				$spinner.removeClass( 'is-active' );
+			} );
+		} );
+	} );
+} )( jQuery );
+JS;
+	wp_add_inline_script( 'windows-azure-storage-admin', $test_connection_js );
+
+	$test_connection_css = '
+		#azure-test-connection-result.azure-test-connection-success { color: #008a20; font-weight: 600; }
+		#azure-test-connection-result.azure-test-connection-error { color: #d63638; font-weight: 600; }
+	';
+	wp_add_inline_style( 'windows-azure-storage-style', $test_connection_css );
 }
 
 add_action( 'admin_enqueue_scripts', 'windows_azure_storage_dialog_scripts' );
